@@ -1,5 +1,5 @@
 """
-VainAI — model architecture
+BeatNet — model architecture
 
 Encoder-decoder transformer for motion diffusion.
 The encoder reads upcoming notes, the decoder denoises pose sequences
