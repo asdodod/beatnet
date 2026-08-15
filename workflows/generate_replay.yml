@@ -1,0 +1,103 @@
+name: Auto Generate Replay
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  generate:
+    if: contains(github.event.issue.labels.*.name, 'request-replay')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install deps
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy scipy
+
+      - name: Rate limit check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # count how many replay issues this user closed today
+          TODAY=$(date -u +"%Y-%m-%d")
+          RECENT=$(gh issue list --author "$AUTHOR" --label "request-replay" --state all --limit 10 --json createdAt --jq "[.[] | select(.createdAt | startswith(\"$TODAY\"))] | length")
+
+          if [ "$RECENT" -ge 4 ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "hey @$AUTHOR — you've hit the daily limit (3 replays/day). come back tomorrow!"
+            gh issue close "$ISSUE_NUMBER"
+            exit 1
+          fi
+
+      - name: Download model weights
+        env:
+          MODEL_KEY: ${{ secrets.MODEL_DOWNLOAD_URL }}
+        run: |
+          # model is stored privately — the download URL is in a repo secret
+          # this way nobody can grab the weights from the public repo
+          curl -L -o BeatNet_model_ep15.pt "$MODEL_KEY"
+
+          # also grab the normalization stats
+          curl -L -o pose_mean.npy "${{ secrets.POSE_MEAN_URL }}"
+          curl -L -o pose_std.npy "${{ secrets.POSE_STD_URL }}"
+
+      - name: Generate replay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: python github_bot.py
+
+      - name: Upload .bsor artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-${{ github.event.issue.number }}
+          path: "*.bsor"
+          retention-days: 7
+
+      - name: Comment with download link
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          BSOR_NAME=$(cat output_file.txt)
+
+          gh issue comment "$ISSUE_NUMBER" --body "done! your replay is ready 🎉
+
+          **download:** go to [this action run](https://github.com/$REPO/actions/runs/$RUN_ID), scroll to **Artifacts** at the bottom, and grab \`replay-$ISSUE_NUMBER\`.
+
+          drop the \`.bsor\` file into your Beat Saber \`UserData/Replays\` folder or upload it to [replay.beatleader.xyz](https://replay.beatleader.xyz).
+
+          *generated file: \`$BSOR_NAME\`*"
+
+          gh issue close "$ISSUE_NUMBER"
+
+      - name: Comment on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "sorry @$AUTHOR, something went wrong during generation. this usually means the map key is invalid or the difficulty doesn't exist on this map. double-check and try again?"
+          gh issue close "$ISSUE_NUMBER"
