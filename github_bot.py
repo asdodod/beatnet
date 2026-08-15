@@ -47,12 +47,12 @@ def main():
         if "BeatSaver Map Key" in line:
             if i + 2 < len(lines):
                 map_id = lines[i + 2].strip()
-        if "Выбор сложности" in line:
+        if "Difficulty" in line:
             if i + 2 < len(lines):
                 difficulty = lines[i + 2].strip()
                 
     if not map_id:
-        send_comment(issue_number, f"@{author} Ошибка: Не удалось найти ID карты в вашем запросе. Пожалуйста, заполните форму корректно.")
+        send_comment(issue_number, f"@{author} Error: Could not find a map ID in your request. Please fill out the form correctly.")
         close_issue(issue_number)
         sys.exit(0)
         
@@ -66,7 +66,7 @@ def main():
         with urllib.request.urlopen(req) as response:
             data = json.loads(response.read().decode('utf-8'))
     except Exception as e:
-        send_comment(issue_number, f"@{author} Ошибка: Не удалось найти карту с ID `{map_id}` на BeatSaver. Проверьте правильность ID.")
+        send_comment(issue_number, f"@{author} Error: Could not find map with ID `{map_id}` on BeatSaver. Double-check the ID.")
         close_issue(issue_number)
         sys.exit(0)
         
@@ -75,7 +75,7 @@ def main():
     print(f"Map duration: {duration} seconds")
     
     if duration > MAX_DURATION_SECONDS:
-        send_comment(issue_number, f"@{author} Ошибка: Длина песни составляет {duration} секунд. Из-за лимитов серверов GitHub разрешены песни не длиннее {MAX_DURATION_SECONDS} секунд (5 минут).")
+        send_comment(issue_number, f"@{author} Error: Song duration is {duration} seconds. Due to server limits, maps longer than {MAX_DURATION_SECONDS} seconds (5 minutes) are not allowed.")
         close_issue(issue_number)
         sys.exit(0)
         
@@ -106,14 +106,14 @@ def main():
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError:
-        send_comment(issue_number, f"@{author} Ошибка: Произошёл внутренний сбой во время генерации (возможно, на карте нет сложности `{difficulty}`).")
+        send_comment(issue_number, f"@{author} Error: Internal failure during generation. The map might not have the `{difficulty}` difficulty.")
         close_issue(issue_number)
         sys.exit(1)
         
     # Find the generated bsor
     bsor_files = list(Path(".").glob("*.bsor"))
     if not bsor_files:
-        send_comment(issue_number, f"@{author} Ошибка: Файл реплея не был создан. Возможно, ИИ упал с ошибкой.")
+        send_comment(issue_number, f"@{author} Error: No replay file was generated. The AI script might have crashed.")
         close_issue(issue_number)
         sys.exit(1)
         
