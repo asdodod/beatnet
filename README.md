@@ -87,6 +87,3 @@ python generate_replay.py "path/to/map/folder" ExpertPlus \
 - [BeatSaver](https://beatsaver.com) for the map hosting and API
 - Trained on Kaggle's free T4 GPUs
 
-## License
-
-MIT — Do whatever you want with the code. Model weights are not distributed.
