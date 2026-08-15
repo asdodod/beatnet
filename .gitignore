@@ -1,0 +1,32 @@
+# weights & checkpoints
+*.pt
+*.pth
+*.onnx
+
+# data
+*.npy
+*.parquet
+*.bsor
+*.bplist
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# env
+.env
+.venv/
+venv/
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ide
+.vscode/
+.idea/
+*.swp
