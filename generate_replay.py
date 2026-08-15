@@ -1,15 +1,14 @@
 """
-generate_replay.py — turns any Beat Saber map into a .bsor replay
+BeatNet — generate_replay.py
+────────────────────────────────────────────────────────────────
+Generate a .bsor replay from any Beat Saber map using the trained model.
 
-give it a map folder and a difficulty, it'll run the model and spit out
-a replay file you can watch in-game or on beatleader's web viewer.
+Usage:
+    python generate_replay.py <map_folder> [difficulty] [--model model.pt] [--output out.bsor]
 
-usage:
-    python generate_replay.py <map_folder> [difficulty] [--model model.pt]
-
-examples:
-    python generate_replay.py "./Orchids" ExpertPlus
-    python generate_replay.py "./Orchids" ExpertPlus --model BeatNet_model_ep50.pt --ddim_steps 15
+Examples:
+    python generate_replay.py "C:/Beat Saber/CustomLevels/Orchids" ExpertPlus
+    python generate_replay.py "/content/Orchids" ExpertPlus --model BeatNet_model_ep50.pt
 """
 
 import argparse
@@ -25,13 +24,13 @@ from pathlib import Path
 from model import BeatNetModel
 from rotation_utils import rot6d_to_quat
 
-# generation params
+# ── Constants ──────────────────────────────────────────────────────────────────
 FPS           = 90
 WINDOW_FRAMES = 128
-POSE_DIM      = 27        # 3pos + 6rot for head, left hand, right hand
+POSE_DIM      = 18        # Changed from 14 to 18
 LOOKAHEAD     = 12
 NOTE_FEATURES = 7
-STEP          = WINDOW_FRAMES // 2   # overlap windows by 50% for smoother blending
+STEP          = WINDOW_FRAMES // 2        # 50% overlap → smooth transitions
 
 BSOR_MAGIC   = 0x442d3d69
 BSOR_VERSION = 1
@@ -39,7 +38,7 @@ BSOR_VERSION = 1
 CUT_ANGLES = [270, 90, 180, 0, 315, 45, 225, 135, 0]   # per cutDirection enum
 
 
-# --- map loading ---
+# ── Map loading ────────────────────────────────────────────────────────────────
 def load_info(map_folder: Path) -> dict:
     for name in ("Info.dat", "info.dat"):
         p = map_folder / name
@@ -96,7 +95,7 @@ def parse_notes(dat_path: str, bpm: float) -> list:
     return notes
 
 
-# --- note context for the model ---
+# ── Note context builder ───────────────────────────────────────────────────────
 def build_note_context(notes: list, current_time: float) -> np.ndarray:
     ctx      = np.zeros((LOOKAHEAD, NOTE_FEATURES), dtype=np.float32)
     upcoming = [n for n in notes if n["time"] >= current_time][:LOOKAHEAD]
@@ -131,7 +130,7 @@ def build_note_context(notes: list, current_time: float) -> np.ndarray:
     return ctx
 
 
-# --- DDIM sampler (fast denoising) ---
+# ── DDIM sampler ───────────────────────────────────────────────────────────────
 def ddim_sample(model, note_ctx: torch.Tensor, device,
                 num_steps: int = 1000, ddim_steps: int = 50) -> np.ndarray:
     """DDIM sampling — 50 forward passes instead of 1000."""
@@ -155,7 +154,7 @@ def ddim_sample(model, note_ctx: torch.Tensor, device,
     return x.squeeze(0).cpu().numpy()
 
 
-# --- main generation loop ---
+# ── Frame generation ───────────────────────────────────────────────────────────
 def generate_frames(model, notes: list, duration: float, device, ddim_steps: int = 50, model_path: str = "."):
     frame_times = np.arange(0, duration, 1.0 / FPS, dtype=np.float32)
     N           = len(frame_times)
@@ -212,24 +211,21 @@ def generate_frames(model, notes: list, duration: float, device, ddim_steps: int
     print("  Converting 6D rotations back to quaternions...")
     out_poses_t = torch.from_numpy(out_poses)
     
-    h_pos = out_poses_t[:, 0:3]
-    h_rot_6d = out_poses_t[:, 3:9]
-    l_pos = out_poses_t[:, 9:12]
-    l_rot_6d = out_poses_t[:, 12:18]
-    r_pos = out_poses_t[:, 18:21]
-    r_rot_6d = out_poses_t[:, 21:27]
+    l_pos = out_poses_t[:, 0:3]
+    l_rot_6d = out_poses_t[:, 3:9]
+    r_pos = out_poses_t[:, 9:12]
+    r_rot_6d = out_poses_t[:, 12:18]
     
-    h_quat = rot6d_to_quat(h_rot_6d)
     l_quat = rot6d_to_quat(l_rot_6d)
     r_quat = rot6d_to_quat(r_rot_6d)
     
-    final_poses_21d = torch.cat([h_pos, h_quat, l_pos, l_quat, r_pos, r_quat], dim=-1).numpy()
+    final_poses_14d = torch.cat([l_pos, l_quat, r_pos, r_quat], dim=-1).numpy()
 
     print("  100% — done!")
-    return final_poses_21d, frame_times
+    return final_poses_14d, frame_times
 
 
-# --- bsor file writer ---
+# ── BSOR writer ────────────────────────────────────────────────────────────────
 def _pack_str(s: str) -> bytes:
     b = s.encode("utf-8")
     return struct.pack("<i", len(b)) + b
@@ -239,7 +235,7 @@ def _norm_q(x, y, z, w):
     return (x/L, y/L, z/L, w/L) if L > 1e-8 else (0.0, 0.0, 0.0, 1.0)
 
 
-def write_bsor(out_path, frame_times, poses, notes, song_name, song_hash, difficulty, characteristic="Standard"):
+def write_bsor(out_path, frame_times, poses, song_name, song_hash, difficulty, characteristic="Standard"):
     buf = bytearray()
     buf += struct.pack("<iB", BSOR_MAGIC, BSOR_VERSION)
 
@@ -260,67 +256,22 @@ def write_bsor(out_path, frame_times, poses, notes, song_name, song_hash, diffic
     buf += struct.pack("<i", len(frame_times))
     for i, t in enumerate(frame_times):
         p = poses[i]
-        hx, hy, hz          = float(p[0]),  float(p[1]),  float(p[2])
-        hqx, hqy, hqz, hqw = _norm_q(float(p[3]), float(p[4]), float(p[5]), float(p[6]))
-        lx, ly, lz          = float(p[7]),  float(p[8]),  float(p[9])
-        lqx, lqy, lqz, lqw = _norm_q(float(p[10]), float(p[11]), float(p[12]), float(p[13]))
-        rx, ry, rz          = float(p[14]), float(p[15]), float(p[16])
-        rqx, rqy, rqz, rqw = _norm_q(float(p[17]), float(p[18]), float(p[19]), float(p[20]))
+        lx, ly, lz          = float(p[0]),  float(p[1]),  float(p[2])
+        lqx, lqy, lqz, lqw = _norm_q(float(p[3]), float(p[4]), float(p[5]), float(p[6]))
+        rx, ry, rz          = float(p[7]),  float(p[8]),  float(p[9])
+        rqx, rqy, rqz, rqw = _norm_q(float(p[10]), float(p[11]), float(p[12]), float(p[13]))
+        hx, hy, hz          = (lx+rx)*0.5, max(ly, ry)+0.5, (lz+rz)*0.5
 
         buf += struct.pack("<fi",  float(t), int(FPS))   # time=float, fps=int32
         buf += struct.pack("<fff",  hx,  hy,  hz)        # head position
-        buf += struct.pack("<ffff", hqx, hqy, hqz, hqw)  # head rotation
+        buf += struct.pack("<ffff", 0.0, 0.0, 0.0, 1.0)  # head rotation
         buf += struct.pack("<fff",  lx,  ly,  lz)        # left hand position
         buf += struct.pack("<ffff", lqx, lqy, lqz, lqw)  # left hand rotation
         buf += struct.pack("<fff",  rx,  ry,  rz)        # right hand position
         buf += struct.pack("<ffff", rqx, rqy, rqz, rqw)  # right hand rotation
 
-    # Block 2 — Notes
-    buf += struct.pack("B", 2)
-    buf += struct.pack("<i", len(notes))
-    
-    for n in notes:
-        t = n["time"]
-        # Find closest frame
-        idx = np.argmin(np.abs(frame_times - t))
-        if idx >= len(poses):
-            idx = len(poses) - 1
-            
-        p = poses[idx]
-        lx, ly, lz = float(p[7]), float(p[8]), float(p[9])
-        rx, ry, rz = float(p[14]), float(p[15]), float(p[16])
-        
-        note_x = (n["x"] - 1.5) * 0.6
-        note_y = n["y"] * 0.6 + 0.85
-        color = int(n["color"])
-        
-        if color == 0:
-            dist = math.sqrt((lx - note_x)**2 + (ly - note_y)**2)
-        else:
-            dist = math.sqrt((rx - note_x)**2 + (ry - note_y)**2)
-            
-        is_hit = dist < 1.2
-        
-        # NoteID formula used by some parsers: color*10000 + x*1000 + y*100 + cutDir*10
-        noteID = int(color * 10000 + n["x"] * 1000 + n["y"] * 100 + n["cut_dir"] * 10)
-        
-        eventType = 0 if is_hit else 2  # 0=Good, 2=Miss
-        buf += struct.pack("<iffi", noteID, float(t), float(t - 2.0), int(eventType))
-        
-        if is_hit:
-            # 72 bytes of NoteCutInfo
-            # <???? f fff i f f fff fff f f f f -> 4 bools, 16 floats, 1 int = 21 args
-            buf += struct.pack("<????ffffiffffffffffffffff",
-                True, True, True, False,            # speedOK, dirOK, saberTypeOK, wasCutTooSoon
-                10.0, 0.0, 1.0, 0.0, int(color),    # saberSpeed, saberDir (vec3), saberType
-                0.0, 0.0,                           # timeDev, cutDirDev
-                float(note_x), float(note_y), 0.0,  # cutPoint (vec3)
-                0.0, 0.0, 1.0,                      # cutNormal (vec3)
-                0.0, 0.0, 1.0, 1.0                  # dist, angle, before rating, after rating
-            )
-            
-    # Blocks 3-5 — empty
-    for bid in [3, 4, 5]:
+    # Blocks 2-5 — empty
+    for bid in [2, 3, 4, 5]:
         buf += struct.pack("<Bi", bid, 0)   # explicit < to avoid padding bytes
 
     with open(out_path, "wb") as f:
@@ -335,7 +286,7 @@ def main():
     ap = argparse.ArgumentParser(description="BeatNet replay generator")
     ap.add_argument("map_folder",   help="Path to map folder containing Info.dat")
     ap.add_argument("difficulty",   nargs="?", default="ExpertPlus")
-    ap.add_argument("--model",      default="BeatNet_model_ep100.pt")
+    ap.add_argument("--model",      default="BeatNet_model_ep50.pt")
     ap.add_argument("--output",     default=None)
     ap.add_argument("--ddim_steps", type=int, default=50,
                     help="DDIM sampling steps (default 50; more = better but slower)")
@@ -413,7 +364,7 @@ def main():
         safe     = re.sub(r"[^\w\-]", "_", song_name)
         out_path = f"{safe}_{args.difficulty}_{characteristic}_AI.bsor"
 
-    write_bsor(out_path, frame_times, poses, notes, song_name, song_hash, args.difficulty, characteristic)
+    write_bsor(out_path, frame_times, poses, song_name, song_hash, args.difficulty, characteristic)
 
 
 if __name__ == "__main__":
