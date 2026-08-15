@@ -15,7 +15,7 @@
 
 ## What is this
 
-BeatNet generates full-body motion replays (`.bsor`) for any Beat Saber map. It doesn't use scripted movements or hardcoded patterns — it learned how humans play by watching thousands of real replays from BeatLeader.
+BeatNet generates full-body motion replays (`.bsor`) for any Beat Saber map. It doesn't use scripted movements - it learned how humans play by watching thousands of real replays from BeatLeader.
 
 The core is a **transformer-based diffusion model** trained on ~400k windows of real player motion data (head + both hands at 90fps). Given a beatmap's note sequence, it denoises gaussian noise into realistic saber trajectories frame by frame. Think of it like stable diffusion, but instead of generating images it generates 3D hand movements.
 
